@@ -1,0 +1,251 @@
+#Location of where the ImageMagick convert program is installed 
+$ImagemagickConvertApplication = "C:\PdfDiffWork\ImageMagick\convert.exe"
+$ImagemagickCompareApplication = "C:\PdfDiffWork\ImageMagick\compare.exe" 
+$BurstPDFApplication="C:\PdfDiffWork\PDFtkServer\bin\pdftk.exe"
+#Location of first set of PDF files
+$InputFolder1 = "C:\PdfDiffWork\input1" 
+#Location of second set of PDF files
+$InputFolder2 = "C:\PdfDiffWork\input2" 
+#Location where the results of comparison operation will be archived
+$OutputFolder = "C:\PdfDiffWork\output" 
+
+#This function bursts open the PDF file into individual PDF page files
+Function BurstAndCreateIndividualPagesOfInputFilesConsidered
+{
+    Param ($inputfile, $outputfolder)
+    #Split the PDF files into individual pages and create PDFs of each one of them
+    $argument = "burst output " + "`'" + $outputfolder + "\page_%02d.pdf" + "`'"
+    #Now, assemble the command line needed to burst open the second PDF file into individual pages
+    $BurstPDFApplicationCmdLine = "& " + "`'" + $BurstPDFApplication + "`'" + " " + "`'" `
+                                       + $inputfile + "`'" + " " + $argument
+
+    try
+    {
+        echo $BurstPDFApplicationCmdLine
+        #invoke the assembled command
+        Invoke-Expression $BurstPDFApplicationCmdLine
+        echo ("The PDF file " + $inputfile + " was successfully burst open")
+    }
+    catch
+    {
+        throw ("Error attempting to burst PDF file " + $inputfile `
+                + " into individual pages. Error -> " + $_)
+    }
+}
+
+#This function converts individual pdf files into JPEG images to enable image comparison operations
+Function ConvertIndividualPagePdfFileIntoJpegFile
+{
+    Param ([string] $IndividualPagePdfFile)
+    #convert PDF page file into a JPEG image
+    #the image name will be the PDF file name appended with ".jpg" in the end
+    [string] $JpegFileName = $IndividualPagePdfFile + ".jpg"
+    #assemble the command that will invoked
+    [string] $ConvertPDtoJPEGFApplicationCmdLine = $Imagemagickconvertapplication + " -quiet -density " `
+            + "400x300" + " " + "`'" + $IndividualPagePdfFile + "`'" + " " + "`'" + $JpegFileName + "`'"
+    
+    try
+    {
+        Invoke-Expression $ConvertPDtoJPEGFApplicationCmdLine
+        if ((Test-Path -Path $JpegFileName) -eq $true)
+        {
+            echo ("Conversion of PDF file " + $IndividualPagePdfFile `
+                    + " to JPEG format was successfull")
+        }
+    }
+    catch
+    {
+        throw ("Error attempting to convert " + $IndividualPagePdfFile `
+                + " into jpeg format. Error -> " + $_)
+    }
+}    
+
+#This function compares two images files and write the differences to another image file
+Function CompareImageFilesAndWriteDiffFile
+{
+    Param ([string] $ImageFile1, [string] $ImageFile2, [string] $diffoutputfile) 
+    #assemble the command that will invoked
+    [string] $CompareImagesApplicationCmdLine = $ImagemagickCompareApplication + " " + "`'" + $ImageFile1 `
+    + "`'" + " " + "`'" + $ImageFile2 + "`'" + " " + "`'" + $diffoutputfile + "`'"
+
+    try
+    {
+        Invoke-Expression $CompareImagesApplicationCmdLine
+        if ((Test-Path -Path $diffoutputfile) -eq $true)
+        {
+            echo ("Difference operation was successfull. Difference image " + $diffoutputfile `
+                  + " was created successfully")
+        }
+        
+    }
+    catch
+    {
+        throw ("Error occured while comparing jpeg images " + $ImageFile1 + " and " + $ImageFile2 `
+                + ".Error -> " + $_)
+    }
+}
+
+#This function helps stitch the individual pages compared and the diff image generated in a three way image
+Function CreateThreeWayStitchedImage
+{
+    Param ([string] $ImageFile1, [string] $ImageFile2, [string] $diffoutputJpegfile, [string] $stitchedfile)
+    #assemble the command that will invoked
+    [string] $StitchImagesApplicationCmdLine = $ImagemagickConvertApplication + " " + "`'" + $ImageFile1 + `
+    "`'" + " " + "`'" + $ImageFile2 + "`'" + " " + "`'" + $diffoutputJpegfile + "`'" + " +append " `
+    + "`'" + $stitchedfile + "`'"
+
+    try
+    {
+        Invoke-Expression $StitchImagesApplicationCmdLine
+        if ((Test-Path -Path $stitchedfile) -eq $true)
+        {
+            echo ("Stitch operation was successfull. Stitched image " + $stitchedfile `
+            + " was created successfully")
+        }
+    }
+    catch
+    {
+        throw ("Error occured while stitching jpeg images " + $ImageFile1 + "," + $ImageFile2 `
+        + " and " + $diffoutputJpegfile + " for three way review. Error -> " + $_)
+    }
+}
+
+#This function creates one single image which lists 
+#all the individual side by side comparison images vertically
+Function CreateFullDiffViewImageFor
+{
+    Param ([string] $processingFile, [string] $fullDiffReportOutputFolder)
+    #stitch all the three way images vertically
+    $stitchedimagefolder = $OutputFolder + "\" `
+    + [System.IO.Path]::GetFileNameWithoutExtension($processingFile) + "\quickview"
+    
+    [bool] $DirectoryExists = Test-Path $stitchedimagefolder
+    if ($DirectoryExists)
+    {
+        [string] $AllFilesInFolder = ""
+        $stitchedimagesfiles = ls $stitchedimagefolder *.jpg
+        $NumberOfStitchedImagesToCompileForDiffView = @(Get-Childitem $stitchedimagefolder *.jpg).Count
+        echo ("Number of stitched images to compile into single image for diff view " `
+                + $NumberOfStitchedImagesToCompileForDiffView)
+                
+        if ($NumberOfStitchedImagesToCompileForDiffView -gt 0)
+        {
+            foreach($stitchedfile in $stitchedimagesfiles)
+            {
+                $AllFilesInFolder = $AllFilesInFolder + " " + "`'" + $stitchedimagefolder + "\" `
+                + $stitchedfile + "`'"
+            }
+            [string] $outputfilename = $fullDiffReportOutputFolder + "\fulldiffview" `
+                    + $FileNameWithoutExtension + ".jpg"
+            [string] $StitchAllImagesApplicationCmdLine = $ImagemagickConvertApplication `
+                      + " " + $AllFilesInFolder + " -append " + "`'" + $outputfilename + "`'"
+            
+            try
+            {
+                Invoke-Expression $StitchAllImagesApplicationCmdLine
+                if ((Test-Path -Path $outputfilename) -eq $true)
+                {
+                    echo ("Full diff view stitch operation was successfull. Full diff view image "`
+                     + $outputfilename + " was created successfully")
+                }
+
+            }
+            catch
+            {
+                throw ("Error occured while stitching all three way compare images for " `
+                + " the input file considered. Error -> " + $_)
+            }
+
+        }
+        elseif ($NumberOfStitchedImagesToCompileForDiffView -eq 0)
+        {
+            echo ("No diff images found to stitch together for full diff view operation")
+        }
+    }
+}
+
+$pdffiles = ls $InputFolder1 *.pdf # retrieve the list of PDF files in the input folder 1
+foreach($apdffile in $pdffiles) #now loop through the files retrieved
+{
+    [string] $filenamewithoutextension = [System.IO.Path]::GetFileNameWithoutExtension($apdffile)
+    [string] $outputfolderforfile = $OutputFolder + "\" + $filenamewithoutextension
+    [string]$inputfolder1pdffile = $InputFolder1 + "\" + $apdffile      
+    try
+    {       
+        [string] $inputfolder2pdffile = $InputFolder2 + "\" + $apdffile
+        [bool] $FileExists = Test-Path ($inputfolder2pdffile)
+        #if no such file exists in the second folder, then continue to next file for comparison
+        if ($FileExists  -eq $false) 
+        {
+            throw ("No such file matching file exists in compare " + $inputfolder2pdffile `
+                    + ". Skipping to next input file")
+        }   
+        
+        [string] $filespecificinterimprocessingfolder1 = $outputfolderforfile + "\" + "interim1"
+        [string] $filespecificinterimprocessingfolder2 = $outputfolderforfile + "\" + "interim2"
+       
+        #Create temporary directory to store individual PDF pages of the main PDF document
+        New-Item -Path $filespecificinterimprocessingfolder1 -itemType "directory" -force
+        #Call the function to burst open the main PDF into individual pages
+        BurstAndCreateIndividualPagesOfInputFilesConsidered `
+        $inputfolder1pdffile `
+        $filespecificinterimprocessingfolder1
+       
+        #Create temporary directory to store individual PDF pages of the compared to PDF document
+        New-Item -Path $filespecificinterimprocessingfolder2 -itemType "directory" -force
+        #Call the function to burst open the compared to PDF into individual pages
+        BurstAndCreateIndividualPagesOfInputFilesConsidered `
+        $inputfolder2pdffile `
+        $filespecificinterimprocessingfolder2
+            
+        #Now convert these individual pages into images 
+        [string] $diffoutputfolder = $outputfolderforfile + "\diff"
+        New-Item -Path $diffoutputfolder -itemType "directory" -force
+        
+        $interimfiles = ls $filespecificinterimprocessingfolder1 *.pdf
+        foreach($intf in $interimfiles)
+        {
+            [string] $IndividualPagePdfFile1=$filespecificinterimprocessingfolder1 + "\" + $intf
+            [string] $IndividualPagePdfFile2=$filespecificinterimprocessingfolder2 + "\" + $intf
+            
+            ConvertIndividualPagePdfFileIntoJpegFile $IndividualPagePdfFile1
+            ConvertIndividualPagePdfFileIntoJpegFile $IndividualPagePdfFile2
+        }
+        
+        $interimJpgfiles = ls $filespecificinterimprocessingfolder1 *.jpg
+        foreach($intJpgfile in $interimJpgfiles)
+        {
+            [string] $IndividualPageJpgFile1=$filespecificinterimprocessingfolder1 + "\" + $intJpgfile
+            [string] $IndividualPageJpgFile2=$filespecificinterimprocessingfolder2 + "\" + $intJpgfile
+            [string] $diffoutputJpegfile = $diffoutputfolder + "\" `
+            + [System.IO.Path]::GetFileNameWithoutExtension($IndividualPageJpgFile1) + ".jpg"
+            
+            CompareImageFilesAndWriteDiffFile $IndividualPageJpgFile1 `
+                                              $IndividualPageJpgFile2 `
+                                              $diffoutputJpegfile
+            
+            #Stitch the three images side by side for easy three way review
+            [string] $stitchedimagefolder = $outputfolderforfile + "\quickview"
+            New-Item -Path $stitchedimagefolder -itemType "directory" -force
+            [string] $stitchedfile = $stitchedimagefolder + "\" `
+            + [System.IO.Path]::GetFileNameWithoutExtension($IndividualPageJpgFile1) + ".jpg"
+            CreateThreeWayStitchedImage $IndividualPageJpgFile1 `
+                                        $IndividualPageJpgFile2 `
+                                        $diffoutputJpegfile `
+                                        $stitchedfile
+        }  
+        
+        #This line is all you need to create a full diff report for each PDF document `
+        CreateFullDiffViewImageFor $inputfolder1pdffile $outputfolderforfile
+
+    }
+    catch
+    {
+        [string] $errormessage = "Error -> " + $_
+        echo $errormessage
+    }      
+ 
+}
+
+echo "Exiting Diff operation..." 
+exit #End of powershell script
